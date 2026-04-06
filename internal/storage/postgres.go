@@ -6,7 +6,8 @@ import (
 	"fmt"
 
 	_ "github.com/lib/pq"
-	"test-task/internal/rates"
+	"go.opentelemetry.io/otel"
+	"rates-service/internal/rates"
 )
 
 type Postgres struct {
@@ -30,6 +31,9 @@ func NewPostgres(ctx context.Context, dsn string) (*Postgres, error) {
 }
 
 func (p *Postgres) SaveRate(ctx context.Context, rate *rates.Rate) error {
+	ctx, span := otel.Tracer("rates-service/storage").Start(ctx, "storage.save_rate")
+	defer span.End()
+
 	if _, err := p.db.ExecContext(
 		ctx,
 		`INSERT INTO rates (ask, bid, timestamp) VALUES ($1, $2, $3)`,
@@ -37,6 +41,8 @@ func (p *Postgres) SaveRate(ctx context.Context, rate *rates.Rate) error {
 		rate.Bid,
 		rate.Timestamp,
 	); err != nil {
+		span.RecordError(err)
+
 		return fmt.Errorf("insert rate: %w", err)
 	}
 

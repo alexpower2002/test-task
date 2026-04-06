@@ -22,12 +22,16 @@ type Calculation struct {
 
 type Config struct {
 	GRPCPort          string
+	MetricsPort       string
 	PostgresDSN       string
 	GrinexURL         string
 	HTTPTimeout       time.Duration
 	ShutdownTimeout   time.Duration
 	DBConnectAttempts int
 	DBConnectDelay    time.Duration
+	LogLevel          string
+	ServiceName       string
+	TraceExporter     string
 	Ask               Calculation
 	Bid               Calculation
 }
@@ -38,8 +42,12 @@ func Load(args []string) (Config, error) {
 	cfg := Config{}
 
 	fs.StringVar(&cfg.GRPCPort, "grpc-port", envString("APP_GRPC_PORT", "9001"), "gRPC listen port")
+	fs.StringVar(&cfg.MetricsPort, "metrics-port", envString("APP_METRICS_PORT", "9090"), "Prometheus metrics port")
 	fs.StringVar(&cfg.PostgresDSN, "postgres-dsn", envString("APP_POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/rates?sslmode=disable"), "PostgreSQL connection DSN")
 	fs.StringVar(&cfg.GrinexURL, "grinex-url", envString("APP_GRINEX_URL", "https://grinex.io/api/v1/spot/depth?symbol=usdta7a5"), "Grinex depth API URL")
+	fs.StringVar(&cfg.LogLevel, "log-level", envString("APP_LOG_LEVEL", "info"), "zap log level")
+	fs.StringVar(&cfg.ServiceName, "service-name", envString("APP_SERVICE_NAME", "rates-service"), "OpenTelemetry service name")
+	fs.StringVar(&cfg.TraceExporter, "trace-exporter", envString("APP_TRACE_EXPORTER", "stdout"), "OpenTelemetry exporter: stdout or none")
 
 	httpTimeout := fs.String("http-timeout", envString("APP_HTTP_TIMEOUT", "5s"), "HTTP client timeout")
 	shutdownTimeout := fs.String("shutdown-timeout", envString("APP_SHUTDOWN_TIMEOUT", "10s"), "Graceful shutdown timeout")
@@ -96,8 +104,12 @@ func validate(cfg Config) error {
 		return fmt.Errorf("db-connect-attempts must be >= 1")
 	}
 
-	if cfg.GRPCPort == "" {
-		return fmt.Errorf("grpc-port must not be empty")
+	if cfg.GRPCPort == "" || cfg.MetricsPort == "" {
+		return fmt.Errorf("ports must not be empty")
+	}
+
+	if cfg.TraceExporter != "stdout" && cfg.TraceExporter != "none" {
+		return fmt.Errorf("trace-exporter must be stdout or none")
 	}
 
 	return nil

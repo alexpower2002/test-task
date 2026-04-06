@@ -10,19 +10,32 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
-	"test-task/internal/config"
-	grpcsvc "test-task/internal/grpc"
-	"test-task/internal/rates"
-	"test-task/internal/storage"
-	"test-task/internal/utils"
-	"test-task/proto/ratespb"
+	"rates-service/internal/config"
+	grpcsvc "rates-service/internal/grpc"
+	"rates-service/internal/observability"
+	"rates-service/internal/rates"
+	"rates-service/internal/storage"
+	"rates-service/internal/utils"
+	"rates-service/proto/ratespb"
 )
+
+type AppLogger interface {
+	Info(msg string, fields ...zap.Field)
+	Warn(msg string, fields ...zap.Field)
+	Error(msg string, fields ...zap.Field)
+	Sync() error
+}
 
 type RateStore interface {
 	grpcsvc.RateRepository
 	Close() error
+}
+
+type AppMigrator interface {
+	Up(ctx context.Context) error
 }
 
 func main() {
@@ -40,10 +53,33 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	logger, err := newLogger(cfg.LogLevel)
+
+	if err != nil {
+		return fmt.Errorf("build logger: %w", err)
+	}
+
+	defer func() {
+		_ = logger.Sync()
+	}()
+
+	traceShutdown, err := observability.SetupTracing(logger, cfg.TraceExporter, cfg.ServiceName)
+
+	if err != nil {
+		return fmt.Errorf("setup tracing: %w", err)
+	}
+
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+
+		_ = traceShutdown.Shutdown(ctx)
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	store, err := connectWithRetry(ctx, cfg)
+	store, err := connectWithRetry(ctx, cfg, logger)
 
 	if err != nil {
 		return err
@@ -51,6 +87,23 @@ func run() error {
 
 	defer func() {
 		_ = store.Close()
+	}()
+
+	var migrator AppMigrator = storage.NewPostgresMigrator(cfg.PostgresDSN)
+
+	if err := migrator.Up(ctx); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+
+	var metrics grpcsvc.RequestMetrics = observability.NewPrometheusMetrics()
+
+	metricsServer := observability.StartMetricsServer(":"+cfg.MetricsPort, logger)
+
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+
+		_ = metricsServer.Shutdown(shutdownCtx)
 	}()
 
 	var httpClient rates.HTTPClient = utils.NewRestyClient(cfg.HTTPTimeout)
@@ -71,7 +124,7 @@ func run() error {
 	var provider grpcsvc.RateProvider = rates.NewProvider(fetcher, askCalculator, bidCalculator)
 
 	grpcServer := grpc.NewServer()
-	rateServer := grpcsvc.NewRateServer(store, provider)
+	rateServer := grpcsvc.NewRateServer(store, provider, logger, metrics)
 
 	ratespb.RegisterRateServiceServer(grpcServer, rateServer)
 	reflection.Register(grpcServer)
@@ -85,11 +138,16 @@ func run() error {
 	serveErr := make(chan error, 1)
 
 	go func() {
+		logger.Info("gRPC server started", zap.String("port", cfg.GRPCPort))
+
 		serveErr <- grpcServer.Serve(listener)
 	}()
 
+	logger.Info("metrics server started", zap.String("port", cfg.MetricsPort))
+
 	select {
 	case <-ctx.Done():
+		logger.Info("shutdown signal received")
 	case err := <-serveErr:
 		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			return fmt.Errorf("serve gRPC: %w", err)
@@ -113,6 +171,8 @@ func run() error {
 		grpcServer.Stop()
 	}
 
+	_ = metricsServer.Shutdown(shutdownCtx)
+
 	return nil
 }
 
@@ -127,7 +187,7 @@ func newCalculator(calculation config.Calculation) (rates.Calculator, error) {
 	}
 }
 
-func connectWithRetry(ctx context.Context, cfg config.Config) (RateStore, error) {
+func connectWithRetry(ctx context.Context, cfg config.Config, logger AppLogger) (RateStore, error) {
 	delay := cfg.DBConnectDelay
 
 	var lastErr error
@@ -136,10 +196,18 @@ func connectWithRetry(ctx context.Context, cfg config.Config) (RateStore, error)
 		store, err := storage.NewPostgres(ctx, cfg.PostgresDSN)
 
 		if err == nil {
+			logger.Info("database connection established", zap.Int("attempt", attempt))
+
 			return store, nil
 		}
 
 		lastErr = err
+
+		logger.Warn("database connection attempt failed",
+			zap.Int("attempt", attempt),
+			zap.Int("max_attempts", cfg.DBConnectAttempts),
+			zap.Error(err),
+		)
 
 		select {
 		case <-ctx.Done():
@@ -149,4 +217,18 @@ func connectWithRetry(ctx context.Context, cfg config.Config) (RateStore, error)
 	}
 
 	return nil, fmt.Errorf("connect to database: %w", lastErr)
+}
+
+func newLogger(level string) (AppLogger, error) {
+	var zapLevel zap.AtomicLevel
+
+	if err := zapLevel.UnmarshalText([]byte(level)); err != nil {
+		return nil, err
+	}
+
+	loggerConfig := zap.NewProductionConfig()
+
+	loggerConfig.Level = zapLevel
+
+	return loggerConfig.Build()
 }

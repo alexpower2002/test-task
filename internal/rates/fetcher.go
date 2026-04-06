@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+
+	"go.opentelemetry.io/otel"
 )
 
 type OrderBook struct {
@@ -47,31 +49,46 @@ func NewFetcher(httpClient HTTPClient, apiURL string) *Fetcher {
 }
 
 func (c *Fetcher) FetchOrderBook(ctx context.Context) (*OrderBook, error) {
+	tracer := otel.Tracer("rates-service/rates")
+	ctx, span := tracer.Start(ctx, "rates.fetch")
+	defer span.End()
+
 	var payload depthResponse
 
 	body, statusCode, err := c.httpClient.Get(ctx, c.apiURL)
 
 	if err != nil {
+		span.RecordError(err)
+
 		return nil, fmt.Errorf("request grinex depth: %w", err)
 	}
 
 	if statusCode >= 400 {
-		return nil, fmt.Errorf("grinex returned status %d", statusCode)
+		err = fmt.Errorf("grinex returned status %d", statusCode)
+		span.RecordError(err)
+
+		return nil, err
 	}
 
 	if err := json.Unmarshal(body, &payload); err != nil {
+		span.RecordError(err)
+
 		return nil, fmt.Errorf("decode grinex response: %w", err)
 	}
 
 	asks, err := parseLevels(payload.Asks)
 
 	if err != nil {
+		span.RecordError(err)
+
 		return nil, fmt.Errorf("parse asks: %w", err)
 	}
 
 	bids, err := parseLevels(payload.Bids)
 
 	if err != nil {
+		span.RecordError(err)
+
 		return nil, fmt.Errorf("parse bids: %w", err)
 	}
 
