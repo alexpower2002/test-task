@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+// Regenerate Go code with:
+// protoc --proto_path=. --go_out=. --go-grpc_out=. proto/rates.proto
+
+package rates;
+
+option go_package = "proto/ratespb;ratespb";
+
+service RateService {
+  rpc GetRates (GetRatesRequest) returns (GetRatesResponse);
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message GetRatesRequest {}
+
+message GetRatesResponse {
+  double ask = 1;
+  double bid = 2;
+  string timestamp = 3;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;
+  string timestamp = 2;
+}
