@@ -63,7 +63,6 @@ make lint
 ## Запуск
 
 ```bash
-make build
 docker compose up -d
 docker compose run --rm app ./app
 ```
