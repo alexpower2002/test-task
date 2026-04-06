@@ -83,6 +83,13 @@ APP_BID_N=1
 docker compose up -d
 ```
 
+Либо как описано в задаче:
+```bash
+make build
+docker compose up -d
+docker compose run --rm app ./app
+```
+
 ## Проверка
 
 Unit-тесты:
