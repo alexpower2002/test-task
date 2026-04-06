@@ -81,7 +81,6 @@ APP_BID_N=1
 
 ```bash
 docker compose up -d
-docker compose run --rm app ./app
 ```
 
 ## Проверка
