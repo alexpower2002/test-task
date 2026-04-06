@@ -21,20 +21,25 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
     environment:
-      APP_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/rates?sslmode=disable
-      APP_GRPC_PORT: "9001"
-      APP_METRICS_PORT: "9090"
-      APP_ASK_METHOD: topN
-      APP_ASK_N: "1"
-      APP_BID_METHOD: topN
-      APP_BID_N: "1"
+      APP_POSTGRES_DSN: ${APP_POSTGRES_DSN:-postgres://postgres:postgres@postgres:5432/rates?sslmode=disable}
+      APP_GRPC_PORT: "${APP_GRPC_PORT:-9001}"
+      APP_METRICS_PORT: "${APP_METRICS_PORT:-9090}"
+      APP_TRACE_EXPORTER: ${APP_TRACE_EXPORTER:-stdout}
+      APP_ASK_METHOD: ${APP_ASK_METHOD:-topN}
+      APP_ASK_N: "${APP_ASK_N:-1}"
+      APP_ASK_M: "${APP_ASK_M:-2}"
+      APP_BID_METHOD: ${APP_BID_METHOD:-topN}
+      APP_BID_N: "${APP_BID_N:-1}"
+      APP_BID_M: "${APP_BID_M:-2}"
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "9001:9001"
-      - "9090:9090"
+      - "${APP_GRPC_PORT:-9001}:${APP_GRPC_PORT:-9001}"
+      - "${APP_METRICS_PORT:-9090}:${APP_METRICS_PORT:-9090}"
     restart: on-failure
 
 volumes:

@@ -62,6 +62,23 @@ make lint
 
 ## Запуск
 
+Перед запуском через Docker создайте файл `.env` в корне проекта. В него можно вынести не только настройки PostgreSQL, но и параметры приложения, например, чтобы проверить другой режим расчёта:
+
+```env
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=rates
+APP_POSTGRES_DSN=postgres://postgres:postgres@postgres:5432/rates?sslmode=disable
+APP_GRPC_PORT=9001
+APP_METRICS_PORT=9090
+APP_TRACE_EXPORTER=none
+APP_ASK_METHOD=avgNM
+APP_ASK_N=0
+APP_ASK_M=2
+APP_BID_METHOD=topN
+APP_BID_N=1
+```
+
 ```bash
 docker compose up -d
 docker compose run --rm app ./app
